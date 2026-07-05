@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { characters } from '../api.js';
+import { characters, adventure } from '../api.js';
 
 const CLASS_ICONS = { krieger: '⚔️', magier: '🔮', schurke: '🗡️', kleriker: '✨' };
 const CLASS_COLORS = { krieger: 'text-dragonred', magier: 'text-magicblue', schurke: 'text-roguepurple', kleriker: 'text-naturegreen' };
@@ -19,16 +19,26 @@ export default function Dashboard() {
   }, [user]);
 
   const startAdventure = async (char) => {
-    navigate(`/adventure/${char.id}`);
+    try {
+      const res = await adventure.start(user, char.id);
+      navigate(`/adventure/${res.session_id}`);
+    } catch (e) {
+      alert(e.message);
+    }
   };
 
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
         <h2 className="text-2xl font-bold">Meine Helden</h2>
-        <Link to="/create" className="px-4 py-2 bg-gold text-darkbg rounded-xl font-bold hover:bg-amber-400 transition">
-          + Neuer Held
-        </Link>
+        <div className="flex gap-2">
+          <Link to="/multiplayer" className="px-4 py-2 bg-roguepurple/80 text-white rounded-xl font-bold hover:bg-roguepurple transition text-sm">
+            👥 Gemeinsames Abenteuer
+          </Link>
+          <Link to="/create" className="px-4 py-2 bg-gold text-darkbg rounded-xl font-bold hover:bg-amber-400 transition text-sm">
+            + Neuer Held
+          </Link>
+        </div>
       </div>
 
       {loading && <p className="text-slate-400">Lade Helden...</p>}
@@ -67,7 +77,7 @@ export default function Dashboard() {
               onClick={() => startAdventure(c)}
               className="w-full py-2 rounded-xl bg-gold/20 text-gold border border-gold/30 font-bold hover:bg-gold/30 transition"
             >
-              Abenteuer starten
+              Allein spielen
             </button>
           </div>
         ))}

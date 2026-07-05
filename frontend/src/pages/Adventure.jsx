@@ -2,43 +2,50 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { adventure } from '../api.js';
 
+const CLASS_COLORS = { krieger: 'text-dragonred', magier: 'text-magicblue', schurke: 'text-roguepurple', kleriker: 'text-naturegreen' };
+
 export default function Adventure() {
-  const { characterId } = useParams();
+  const { sessionId } = useParams();
   const navigate = useNavigate();
-  const [sessionId, setSessionId] = useState(null);
   const [state, setState] = useState(null);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const logRef = useRef(null);
-  const user = localStorage.getItem('username');
+  const fetchedRef = useRef(false);
 
   useEffect(() => {
+    if (fetchedRef.current) return;
+    fetchedRef.current = true;
     setLoading(true);
-    adventure.start(user, Number(characterId))
-      .then((res) => {
-        setSessionId(res.session_id);
-        setState(res);
-      })
-      .catch((err) => setError(err.message))
-      .finally(() => setLoading(false));
-  }, [user, characterId]);
+    fetchState();
+  }, [sessionId]);
+
+  const fetchState = async () => {
+    try {
+      const res = await adventure.state(sessionId);
+      setState((prev) => ({ ...prev, ...res }));
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
     if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
-  }, [state?.narrative]);
+  }, [state?.narrative, state?.narrative_history]);
 
-  const sendAction = useCallback(async (text) => {
-    if (!sessionId || !text.trim()) return;
+  const sendAction = useCallback(async (text, characterName) => {
+    if (!text.trim()) return;
     setLoading(true);
     setError('');
     setInput('');
     try {
-      const res = await adventure.action(sessionId, text.trim());
+      const res = await adventure.action(sessionId, text.trim(), characterName);
       setState((prev) => ({
         ...res,
         narrative_history: [...(prev?.narrative_history || []), prev?.narrative],
-        options: res.options || []
       }));
     } catch (err) {
       setError(err.message);
@@ -47,12 +54,29 @@ export default function Adventure() {
     }
   }, [sessionId]);
 
-  const handleSubmit = (e) => {
-    e.preventDefault();
-    sendAction(input);
+  const detectCharacter = (text) => {
+    const lower = text.toLowerCase();
+    for (const c of state?.characters || []) {
+      if (lower.includes(c.name.toLowerCase())) return c.name;
+    }
+    return state?.characters?.[0]?.name;
   };
 
-  const handleOption = (opt) => sendAction(opt);
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    if (!state?.characters?.length) return;
+    const charName = detectCharacter(input);
+    sendAction(input, charName);
+  };
+
+  const handleOption = (opt) => {
+    if (!state?.characters?.length) return;
+    sendAction(opt, state.characters[0].name);
+  };
+
+  const handleCharacterAction = (charName, action) => {
+    sendAction(action, charName);
+  };
 
   if (loading && !state) {
     return (
@@ -77,6 +101,8 @@ export default function Adventure() {
 
   const isCombat = state.combat_active || state.combat_start;
   const isComplete = state.adventure_complete;
+  const characters = state.characters || [];
+  const cs = state.combat_state;
 
   return (
     <div className="flex flex-col h-[calc(100vh-80px)]">
@@ -96,6 +122,47 @@ export default function Adventure() {
         </div>
       )}
 
+      {/* Character bar */}
+      {characters.length > 0 && (
+        <div className="flex gap-2 mb-3 overflow-x-auto">
+          {characters.map((c) => {
+            const combatChar = cs?.combatants?.find((cc) => cc.is_player && cc.name === c.name);
+            const hp = combatChar ? combatChar.hp : c.hp_current;
+            const hpMax = combatChar ? combatChar.hp_max : c.hp_max;
+            const pct = Math.max(0, (hp / hpMax) * 100);
+            return (
+              <div key={c.name} className="flex-shrink-0 min-w-[140px] p-3 rounded-xl bg-darkcard border border-slate-700">
+                <div className={`text-sm font-bold ${CLASS_COLORS[c.char_class] || 'text-white'}`}>
+                  {c.name}
+                </div>
+                <div className="text-xs text-slate-400 capitalize">{c.char_class}</div>
+                <div className="mt-1 h-1.5 rounded-full bg-slate-700 overflow-hidden">
+                  <div className="h-full rounded-full bg-naturegreen transition-all" style={{ width: `${pct}%` }} />
+                </div>
+                <div className="text-xs text-slate-400 mt-0.5">{hp}/{hpMax} HP</div>
+                <div className="flex gap-1 mt-1">
+                  <button
+                    onClick={() => handleCharacterAction(c.name, 'angreifen')}
+                    disabled={loading || !isCombat}
+                    className="flex-1 text-[10px] px-1 py-0.5 rounded bg-dragonred/20 text-dragonred border border-dragonred/30 disabled:opacity-30"
+                  >
+                    ⚔️
+                  </button>
+                  <button
+                    onClick={() => handleCharacterAction(c.name, 'verteidigen')}
+                    disabled={loading || !isCombat}
+                    className="flex-1 text-[10px] px-1 py-0.5 rounded bg-magicblue/20 text-magicblue border border-magicblue/30 disabled:opacity-30"
+                  >
+                    🛡️
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Narrative log */}
       <div
         ref={logRef}
         className="flex-1 overflow-y-auto bg-darkcard border border-slate-700 rounded-2xl p-5 mb-4 space-y-3"
@@ -116,30 +183,39 @@ export default function Adventure() {
             <span className="font-bold">🧩 Rätsel:</span> {state.puzzle.question || state.puzzle.description}
           </div>
         )}
+        {state.current_character && !isCombat && (
+          <div className="text-xs text-slate-500 italic">
+            Aktuell: {state.current_character}
+          </div>
+        )}
       </div>
 
       {isComplete ? (
         <div className="text-center py-4">
           <p className="text-naturegreen text-xl font-bold mb-3">🎉 Abenteuer abgeschlossen!</p>
-          <button
-            onClick={() => navigate('/')}
-            className="px-6 py-3 bg-gold text-darkbg rounded-xl font-bold"
-          >
+          <button onClick={() => navigate('/')} className="px-6 py-3 bg-gold text-darkbg rounded-xl font-bold">
             Zum Dashboard
           </button>
         </div>
-      ) : isCombat && state.combat_state ? (
-        <CombatUI state={state} input={input} setInput={setInput} handleSubmit={handleSubmit} handleOption={handleOption} loading={loading} />
+      ) : isCombat ? (
+        <CombatUI state={state} input={input} setInput={setInput} handleSubmit={handleSubmit} handleOption={handleOption} handleCharacterAction={handleCharacterAction} loading={loading} characters={characters} />
       ) : (
-        <ExplorationUI input={input} setInput={setInput} handleSubmit={handleSubmit} handleOption={handleOption} options={state.options} loading={loading} />
+        <ExplorationUI input={input} setInput={setInput} handleSubmit={handleSubmit} handleOption={handleOption} options={state.options} loading={loading} characters={characters} />
       )}
     </div>
   );
 }
 
-function ExplorationUI({ input, setInput, handleSubmit, handleOption, options, loading }) {
+function ExplorationUI({ input, setInput, handleSubmit, handleOption, options, loading, characters }) {
   return (
     <div className="space-y-3">
+      <div className="flex flex-wrap gap-2">
+        {characters.map((c) => (
+          <span key={c.name} className={`text-xs px-2 py-0.5 rounded-full border border-slate-600 ${CLASS_COLORS[c.char_class] || 'text-white'}`}>
+            {c.name}
+          </span>
+        ))}
+      </div>
       {options && options.length > 0 && (
         <div className="flex flex-wrap gap-2">
           {options.map((opt) => (
@@ -157,7 +233,7 @@ function ExplorationUI({ input, setInput, handleSubmit, handleOption, options, l
       <form onSubmit={handleSubmit} className="flex gap-2">
         <input
           className="flex-1 px-4 py-3 rounded-xl bg-darkcard border border-slate-600 text-white placeholder-slate-500 focus:outline-none focus:border-gold"
-          placeholder="Was tust du? (Freitext)"
+          placeholder='Name sagt: "Aktion" (z.B. "Finn greift an")'
           value={input}
           onChange={(e) => setInput(e.target.value)}
           disabled={loading}
@@ -174,31 +250,21 @@ function ExplorationUI({ input, setInput, handleSubmit, handleOption, options, l
   );
 }
 
-function CombatUI({ state, input, setInput, handleSubmit, handleOption, loading }) {
+function CombatUI({ state, input, setInput, handleSubmit, handleCharacterAction, loading, characters }) {
   const cs = state.combat_state;
-  const player = cs?.combatants?.find((c) => c.is_player);
   const enemies = cs?.combatants?.filter((c) => !c.is_player) || cs?.all_combatants?.filter((c) => !c.is_player) || [];
+  const players = cs?.combatants?.filter((c) => c.is_player) || [];
   const currentTurn = cs?.current_turn;
 
   return (
     <div className="space-y-3">
-      <div className="flex gap-3">
-        {player && (
-          <div className="flex-1 p-3 rounded-xl bg-darkcard border border-naturegreen/50">
-            <div className="text-xs text-slate-400">Spieler</div>
-            <div className="font-bold text-naturegreen">{player.name}</div>
-            <div className="text-sm">
-              <span className="text-red-400">{player.hp}</span>
-              <span className="text-slate-500">/{player.hp_max} HP</span>
-              <span className="ml-2 text-slate-400">RK {player.ac}</span>
-            </div>
-          </div>
-        )}
+      {/* Enemy bar */}
+      <div className="flex gap-2 overflow-x-auto">
         {enemies.length > 0 && enemies.map((e) => (
-          <div key={e.name} className={`flex-1 p-3 rounded-xl border ${e.hp <= 0 ? 'border-slate-700 opacity-50' : 'border-dragonred/50'}`}>
+          <div key={e.name} className={`flex-shrink-0 min-w-[100px] p-2 rounded-xl border ${e.hp <= 0 ? 'border-slate-700 opacity-50' : 'border-dragonred/50'}`}>
             <div className="text-xs text-slate-400">Gegner</div>
-            <div className="font-bold text-dragonred">{e.name}</div>
-            <div className="text-sm">
+            <div className="font-bold text-dragonred text-sm">{e.name}</div>
+            <div className="text-xs">
               <span className="text-red-400">{e.hp}</span>
               <span className="text-slate-500">/{e.hp_max} HP</span>
             </div>
@@ -206,19 +272,60 @@ function CombatUI({ state, input, setInput, handleSubmit, handleOption, loading 
         ))}
       </div>
 
+      {currentTurn && (
+        <div className="text-sm text-slate-300">
+          ⏳ <span className="font-bold text-gold">{currentTurn}</span> ist am Zug
+        </div>
+      )}
+
       {state.combat_result && (
         <div className="text-sm text-slate-300 p-2 rounded bg-darkcard border border-slate-700">
           {state.combat_result.message}
         </div>
       )}
 
+      {/* Per-character combat buttons */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+        {characters.map((c) => (
+          <div key={c.name} className="p-2 rounded-xl bg-darkcard border border-slate-700">
+            <div className={`text-xs font-bold mb-1 ${CLASS_COLORS[c.char_class] || 'text-white'}`}>
+              {c.name}
+            </div>
+            <div className="flex gap-1">
+              <button
+                onClick={() => handleCharacterAction(c.name, 'angreifen')}
+                disabled={loading}
+                className="flex-1 text-xs px-2 py-1 rounded bg-dragonred/20 text-dragonred border border-dragonred/30 hover:bg-dragonred/40 disabled:opacity-50"
+              >
+                ⚔️ Angriff
+              </button>
+              <button
+                onClick={() => handleCharacterAction(c.name, 'verteidigen')}
+                disabled={loading}
+                className="flex-1 text-xs px-2 py-1 rounded bg-magicblue/20 text-magicblue border border-magicblue/30 hover:bg-magicblue/40 disabled:opacity-50"
+              >
+                🛡️ Def
+              </button>
+              <button
+                onClick={() => handleCharacterAction(c.name, 'warten')}
+                disabled={loading}
+                className="flex-1 text-xs px-2 py-1 rounded bg-slate-600/20 text-slate-300 border border-slate-600/30 hover:bg-slate-600/40 disabled:opacity-50"
+              >
+                ⏳
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Combat options */}
       <div className="flex gap-2 flex-wrap">
-        {['Angreifen', 'Verteidigen', 'Warten', 'Fliehen'].map((opt) => (
+        {['Fliehen'].map((opt) => (
           <button
             key={opt}
-            onClick={() => handleOption(opt)}
+            onClick={() => handleCharacterAction(characters[0]?.name, opt.toLowerCase())}
             disabled={loading}
-            className="px-4 py-2 rounded-xl bg-darkcard border border-slate-600 text-slate-200 hover:border-gold hover:text-gold transition text-sm disabled:opacity-50"
+            className="px-3 py-1.5 rounded-xl bg-darkcard border border-slate-600 text-slate-200 hover:border-gold text-sm disabled:opacity-50"
           >
             {opt}
           </button>
@@ -228,7 +335,7 @@ function CombatUI({ state, input, setInput, handleSubmit, handleOption, loading 
       <form onSubmit={handleSubmit} className="flex gap-2">
         <input
           className="flex-1 px-4 py-3 rounded-xl bg-darkcard border border-slate-600 text-white placeholder-slate-500 focus:outline-none focus:border-gold"
-          placeholder="Ziel eingeben (z.B. 'Spinnenkrabbe 1')"
+          placeholder='Freitext (z.B. "Finn schießt auf Goblin 1")'
           value={input}
           onChange={(e) => setInput(e.target.value)}
           disabled={loading}

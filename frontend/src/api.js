@@ -21,13 +21,16 @@ export const characters = {
   create: (username, name, class_name, race = 'Mensch') =>
     request('/characters/create', { method: 'POST', body: JSON.stringify({ username, name, class_name, race }) }),
   list: (username) => request(`/characters/list/${username}`),
+  all: () => request('/characters/all'),
   get: (id) => request(`/characters/${id}`),
 };
 
 export const adventure = {
   start: (username, character_id) =>
     request('/adventure/start', { method: 'POST', body: JSON.stringify({ username, character_id }) }),
-  action: (session_id, action_text) =>
-    request('/adventure/action', { method: 'POST', body: JSON.stringify({ session_id, action_text }) }),
+  startMulti: (character_ids) =>
+    request('/adventure/start_multi', { method: 'POST', body: JSON.stringify({ character_ids }) }),
+  action: (session_id, action_text, character_name) =>
+    request('/adventure/action', { method: 'POST', body: JSON.stringify({ session_id, action_text, character_name }) }),
   state: (session_id) => request(`/adventure/state/${session_id}`),
 };

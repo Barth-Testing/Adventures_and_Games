@@ -3,6 +3,7 @@ import Login from './pages/Login.jsx';
 import Dashboard from './pages/Dashboard.jsx';
 import CharacterCreate from './pages/CharacterCreate.jsx';
 import Adventure from './pages/Adventure.jsx';
+import MultiplayerLobby from './pages/MultiplayerLobby.jsx';
 import Layout from './components/Layout.jsx';
 
 function RequireAuth({ children }) {
@@ -19,7 +20,8 @@ export default function App() {
       <Route element={<RequireAuth><Layout /></RequireAuth>}>
         <Route path="/" element={<Dashboard />} />
         <Route path="/create" element={<CharacterCreate />} />
-        <Route path="/adventure/:characterId" element={<Adventure />} />
+        <Route path="/multiplayer" element={<MultiplayerLobby />} />
+        <Route path="/adventure/:sessionId" element={<Adventure />} />
       </Route>
     </Routes>
   );

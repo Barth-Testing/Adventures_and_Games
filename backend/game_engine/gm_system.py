@@ -45,6 +45,15 @@ class GMSystem:
             intent = "creative"
         return {"intent": intent, "target": target, "original": text}
 
+    def _get_character_from_text(self, text):
+        text_lower = text.lower()
+        best = None
+        for c in self.characters:
+            if c.name.lower() in text_lower:
+                best = c
+                break
+        return best
+
     def _match_transition(self, user_text, transitions):
         if not transitions:
             return None
@@ -72,6 +81,7 @@ class GMSystem:
                 result = {"narrative": "Du bist im Kampf! Greife an oder verteidige dich.", "audio_text": "Im Kampf!"}
             state = self.get_state()
             result.update(self._state_to_response(state))
+            result["current_character"] = character.name
             return result
 
         node_data = ADVENTURE_NODES.get(node_key)
@@ -79,10 +89,11 @@ class GMSystem:
             return self._fallback_response()
 
         if node_data.get("type") == "combat" and node_data.get("enemies"):
-            self._start_combat(character, node_data["enemies"])
+            self._start_combat(node_data["enemies"])
             result = self._node_response(node_data)
             state = self.get_state()
             result.update(self._state_to_response(state))
+            result["current_character"] = character.name
             return result
 
         transitions = node_data.get("transitions", {})
@@ -94,15 +105,17 @@ class GMSystem:
             new_node = ADVENTURE_NODES.get(new_key)
             if new_node:
                 if new_node.get("type") == "combat" and new_node.get("enemies"):
-                    self._start_combat(character, new_node["enemies"])
+                    self._start_combat(new_node["enemies"])
                 result = self._node_response(new_node)
                 state = self.get_state()
                 result.update(self._state_to_response(state))
+                result["current_character"] = character.name
                 return result
 
         result = self._node_response(node_data)
         state = self.get_state()
         result.update(self._state_to_response(state))
+        result["current_character"] = character.name
         return result
 
     def _node_response(self, node_data):
@@ -149,6 +162,7 @@ class GMSystem:
         if not player_alive:
             return {"narrative": f"{character.name} ist kampfunfähig!", "audio_text": "Ohnmächtig!", "combat_over": True}
 
+        result = None
         if parsed["intent"] in ("attack", "spell"):
             target = None
             if parsed["target"]:
@@ -158,40 +172,21 @@ class GMSystem:
             result = engine.player_attack(character.name, target.name)
             if "error" in result:
                 return {"narrative": result["error"], "audio_text": result["error"]}
-            enemy_result = engine.enemy_turn()
-            d = {
+            result = {
                 "narrative": result["message"],
                 "audio_text": result["message"],
                 "roll": result["roll"],
                 "success": result["hit"],
                 "combat_result": result
             }
-            alive_enemies = [c for c in engine.combatants if not c.is_player and c.is_alive]
-            if not alive_enemies:
-                return self._end_combat(d)
-            engine.next_turn()
-            d["your_turn"] = True
-            return d
 
         elif parsed["intent"] == "defend":
             if player_char:
                 player_char.ac += 2
-            engine.enemy_turn()
-            d = {"narrative": f"{character.name} geht in Verteidigung. RK +2.", "audio_text": "In Verteidigung."}
-            alive_enemies = [c for c in engine.combatants if not c.is_player and c.is_alive]
-            if not alive_enemies:
-                return self._end_combat(d)
-            engine.next_turn()
-            return d
+            result = {"narrative": f"{character.name} geht in Verteidigung. RK +2.", "audio_text": "In Verteidigung."}
 
         elif parsed["intent"] == "wait":
-            engine.enemy_turn()
-            d = {"narrative": f"{character.name} wartet.", "audio_text": "Warten."}
-            alive_enemies = [c for c in engine.combatants if not c.is_player and c.is_alive]
-            if not alive_enemies:
-                return self._end_combat(d)
-            engine.next_turn()
-            return d
+            result = {"narrative": f"{character.name} wartet.", "audio_text": "Warten."}
 
         elif parsed["intent"] == "flee":
             roll = roll_d20()
@@ -199,8 +194,21 @@ class GMSystem:
                 self.state["combat_active"] = False
                 return {"narrative": "Flucht erfolgreich!", "audio_text": "Ihr flieht.", "fled": True}
             return {"narrative": "Flucht fehlgeschlagen!", "audio_text": "Der Weg ist versperrt!"}
+        else:
+            result = {"narrative": f"{character.name} tut nichts.", "audio_text": "Nichts."}
 
-        return {"narrative": f"{character.name} tut nichts.", "audio_text": "Nichts."}
+        remaining_players = [c for c in engine.combatants if c.is_player and c.is_alive]
+        if remaining_players and all(not c.is_player or not c.is_alive for c in engine.combatants):
+            pass
+
+        engine.enemy_turn()
+        alive_enemies = [c for c in engine.combatants if not c.is_player and c.is_alive]
+        if not alive_enemies:
+            return self._end_combat(result)
+        engine.next_turn()
+        result["your_turn"] = True
+        result["current_character"] = character.name
+        return result
 
     def _end_combat(self, partial=None):
         self.state["combat_active"] = False
@@ -209,6 +217,11 @@ class GMSystem:
         if partial:
             base.update(partial)
         if engine:
+            for pc in engine.combatants:
+                if pc.is_player:
+                    char_model = next((c for c in self.characters if c.name == pc.name), None)
+                    if char_model:
+                        char_model.hp_current = pc.hp
             node_key = self.get_current_node_key()
             from .adventure_data import ADVENTURE_NODES
             node_data = ADVENTURE_NODES.get(node_key)
@@ -217,23 +230,28 @@ class GMSystem:
         self.state["combat_engine"] = None
         return base
 
-    def _start_combat(self, character, enemies_data):
+    def _start_combat(self, enemies_data):
         from .combat import Combatant, CombatEngine
         player_damage_dice = {"krieger": "1d10", "schurke": "1d8", "magier": "1d6", "kleriker": "1d6"}
-        damage_dice = player_damage_dice.get(getattr(character, 'char_class', ''), "1d8")
-        player = Combatant(
-            character.name, is_player=True,
-            hp=character.hp_current, hp_max=character.hp_max,
-            ac=character.ac, attack_bonus=character.attack_bonus,
-            damage_dice=damage_dice, damage_bonus=character.damage_bonus,
-            initiative_bonus=character.initiative_bonus
-        )
+        players = []
+        for char_model in self.characters:
+            dd = player_damage_dice.get(getattr(char_model, 'char_class', ''), "1d8")
+            p = Combatant(
+                char_model.name, is_player=True,
+                hp=char_model.hp_current, hp_max=char_model.hp_max,
+                ac=char_model.ac, attack_bonus=char_model.attack_bonus,
+                damage_dice=dd, damage_bonus=char_model.damage_bonus,
+                initiative_bonus=char_model.initiative_bonus
+            )
+            p.threat = 0
+            players.append(p)
         from .bestiary import get_monster, scale_monster
+        avg_level = max(c.level for c in self.characters) if self.characters else 1
         enemies = []
         for ed in enemies_data:
             template = get_monster(ed["id"])
             if template:
-                scaled = scale_monster(template, character.level)
+                scaled = scale_monster(template, avg_level)
                 for _ in range(ed.get("count", 1)):
                     name = f"{template['name']} {len(enemies)+1}" if ed.get("count", 1) > 1 else template["name"]
                     e = Combatant(name, is_player=False,
@@ -247,7 +265,7 @@ class GMSystem:
                         weaknesses=scaled["weaknesses"],
                         resistances=scaled["resistances"])
                     enemies.append(e)
-        engine = CombatEngine([player], enemies)
+        engine = CombatEngine(players, enemies)
         engine.start_combat()
         self.state["combat_active"] = True
         self.state["combat_engine"] = engine

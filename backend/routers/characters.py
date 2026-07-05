@@ -43,6 +43,18 @@ def create_character(req: CharacterCreate, db: Session = Depends(get_db)):
     db.refresh(character)
     return {"message": f"Charakter {req.name} erstellt", "id": character.id}
 
+@router.get("/all")
+def list_all_characters(db: Session = Depends(get_db)):
+    chars = db.query(Character).all()
+    return [
+        CharacterResponse(
+            id=c.id, name=c.name, char_class=c.char_class, race=c.race,
+            level=c.level, hp_current=c.hp_current, hp_max=c.hp_max,
+            ac=c.ac, attack_bonus=c.attack_bonus, damage_bonus=c.damage_bonus,
+            initiative_bonus=c.initiative_bonus, spell_save_dc=c.spell_save_dc
+        ) for c in chars
+    ]
+
 @router.get("/list/{username}")
 def list_characters(username: str, db: Session = Depends(get_db)):
     account = get_account(username, db)
