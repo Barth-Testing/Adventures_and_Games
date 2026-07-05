@@ -10,7 +10,7 @@ WORKDIR /app
 RUN apk add --no-cache gcc musl-dev
 COPY backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
-COPY backend/ .
+COPY backend ./backend
 COPY --from=frontend-builder /app/frontend/dist ./static
 EXPOSE 8000
 VOLUME ["/app/data"]
