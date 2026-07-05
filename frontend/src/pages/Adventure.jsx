@@ -1,40 +1,54 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { adventure } from '../api.js';
 
 const CLASS_COLORS = { krieger: 'text-dragonred', magier: 'text-magicblue', schurke: 'text-roguepurple', kleriker: 'text-naturegreen' };
 
+function speak(text) {
+  if (!window.speechSynthesis || !text) return;
+  window.speechSynthesis.cancel();
+  const utter = new SpeechSynthesisUtterance(text);
+  utter.lang = 'de-DE';
+  utter.rate = 0.9;
+  utter.pitch = 1;
+  const voices = window.speechSynthesis.getVoices();
+  const german = voices.find((v) => v.lang.startsWith('de'));
+  if (german) utter.voice = german;
+  window.speechSynthesis.speak(utter);
+}
+
 export default function Adventure() {
   const { sessionId } = useParams();
+  const location = useLocation();
   const navigate = useNavigate();
   const [state, setState] = useState(null);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [ttsEnabled, setTtsEnabled] = useState(true);
   const logRef = useRef(null);
-  const fetchedRef = useRef(false);
 
   useEffect(() => {
-    if (fetchedRef.current) return;
-    fetchedRef.current = true;
-    setLoading(true);
-    fetchState();
-  }, [sessionId]);
-
-  const fetchState = async () => {
-    try {
-      const res = await adventure.state(sessionId);
-      setState((prev) => ({ ...prev, ...res }));
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setLoading(false);
+    if (location.state?.initial) {
+      const initial = location.state.initial;
+      setState(initial);
+      if (ttsEnabled) speak(initial.audio_text || initial.narrative);
+      window.history.replaceState({}, document.title);
+    } else {
+      setLoading(true);
+      adventure.state(sessionId)
+        .then((res) => {
+          setState(res);
+          if (ttsEnabled) speak(res.audio_text || res.narrative);
+        })
+        .catch((e) => setError(e.message))
+        .finally(() => setLoading(false));
     }
-  };
+  }, [sessionId]);
 
   useEffect(() => {
     if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
-  }, [state?.narrative, state?.narrative_history]);
+  }, [state?.narrative]);
 
   const sendAction = useCallback(async (text, characterName) => {
     if (!text.trim()) return;
@@ -47,20 +61,21 @@ export default function Adventure() {
         ...res,
         narrative_history: [...(prev?.narrative_history || []), prev?.narrative],
       }));
+      if (ttsEnabled) speak(res.audio_text || res.narrative);
     } catch (err) {
       setError(err.message);
     } finally {
       setLoading(false);
     }
-  }, [sessionId]);
+  }, [sessionId, ttsEnabled]);
 
-  const detectCharacter = (text) => {
+  const detectCharacter = useCallback((text) => {
     const lower = text.toLowerCase();
     for (const c of state?.characters || []) {
       if (lower.includes(c.name.toLowerCase())) return c.name;
     }
     return state?.characters?.[0]?.name;
-  };
+  }, [state?.characters]);
 
   const handleSubmit = (e) => {
     e.preventDefault();
@@ -108,12 +123,28 @@ export default function Adventure() {
     <div className="flex flex-col h-[calc(100vh-80px)]">
       <div className="flex items-center justify-between mb-3">
         <h2 className="text-lg font-bold text-gold">Der Schatten-Schatz der vergessenen Zitadelle</h2>
-        <button
-          onClick={() => navigate('/')}
-          className="text-xs px-3 py-1 rounded border border-slate-600 text-slate-400 hover:text-white transition"
-        >
-          ✕ Schließen
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setTtsEnabled(!ttsEnabled)}
+            className={`text-xs px-2 py-1 rounded border transition ${ttsEnabled ? 'border-naturegreen/50 text-naturegreen' : 'border-slate-600 text-slate-500'}`}
+            title={ttsEnabled ? 'Sprache aus' : 'Sprache an'}
+          >
+            {ttsEnabled ? '🔊' : '🔇'}
+          </button>
+          <button
+            onClick={() => { window.speechSynthesis?.cancel(); }}
+            className="text-xs px-2 py-1 rounded border border-slate-600 text-slate-400 hover:text-white transition"
+            title="Sprachausgabe stoppen"
+          >
+            ⏹
+          </button>
+          <button
+            onClick={() => navigate('/')}
+            className="text-xs px-3 py-1 rounded border border-slate-600 text-slate-400 hover:text-white transition"
+          >
+            ✕ Schließen
+          </button>
+        </div>
       </div>
 
       {error && (
@@ -163,10 +194,7 @@ export default function Adventure() {
       )}
 
       {/* Narrative log */}
-      <div
-        ref={logRef}
-        className="flex-1 overflow-y-auto bg-darkcard border border-slate-700 rounded-2xl p-5 mb-4 space-y-3"
-      >
+      <div ref={logRef} className="flex-1 overflow-y-auto bg-darkcard border border-slate-700 rounded-2xl p-5 mb-4 space-y-3">
         {state.narrative_history?.map((n, i) => (
           <p key={i} className="text-slate-400 text-sm leading-relaxed">{n}</p>
         ))}
@@ -183,11 +211,9 @@ export default function Adventure() {
             <span className="font-bold">🧩 Rätsel:</span> {state.puzzle.question || state.puzzle.description}
           </div>
         )}
-        {state.current_character && !isCombat && (
-          <div className="text-xs text-slate-500 italic">
-            Aktuell: {state.current_character}
-          </div>
-        )}
+        <div className="text-xs text-slate-500 italic">
+          {state.current_character && `${state.current_character}`}
+        </div>
       </div>
 
       {isComplete ? (
@@ -198,7 +224,7 @@ export default function Adventure() {
           </button>
         </div>
       ) : isCombat ? (
-        <CombatUI state={state} input={input} setInput={setInput} handleSubmit={handleSubmit} handleOption={handleOption} handleCharacterAction={handleCharacterAction} loading={loading} characters={characters} />
+        <CombatUI state={state} input={input} setInput={setInput} handleSubmit={handleSubmit} handleCharacterAction={handleCharacterAction} loading={loading} characters={characters} />
       ) : (
         <ExplorationUI input={input} setInput={setInput} handleSubmit={handleSubmit} handleOption={handleOption} options={state.options} loading={loading} characters={characters} />
       )}
@@ -209,7 +235,7 @@ export default function Adventure() {
 function ExplorationUI({ input, setInput, handleSubmit, handleOption, options, loading, characters }) {
   return (
     <div className="space-y-3">
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-wrap gap-1">
         {characters.map((c) => (
           <span key={c.name} className={`text-xs px-2 py-0.5 rounded-full border border-slate-600 ${CLASS_COLORS[c.char_class] || 'text-white'}`}>
             {c.name}
@@ -253,12 +279,10 @@ function ExplorationUI({ input, setInput, handleSubmit, handleOption, options, l
 function CombatUI({ state, input, setInput, handleSubmit, handleCharacterAction, loading, characters }) {
   const cs = state.combat_state;
   const enemies = cs?.combatants?.filter((c) => !c.is_player) || cs?.all_combatants?.filter((c) => !c.is_player) || [];
-  const players = cs?.combatants?.filter((c) => c.is_player) || [];
   const currentTurn = cs?.current_turn;
 
   return (
     <div className="space-y-3">
-      {/* Enemy bar */}
       <div className="flex gap-2 overflow-x-auto">
         {enemies.length > 0 && enemies.map((e) => (
           <div key={e.name} className={`flex-shrink-0 min-w-[100px] p-2 rounded-xl border ${e.hp <= 0 ? 'border-slate-700 opacity-50' : 'border-dragonred/50'}`}>
@@ -284,7 +308,6 @@ function CombatUI({ state, input, setInput, handleSubmit, handleCharacterAction,
         </div>
       )}
 
-      {/* Per-character combat buttons */}
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
         {characters.map((c) => (
           <div key={c.name} className="p-2 rounded-xl bg-darkcard border border-slate-700">
@@ -297,14 +320,14 @@ function CombatUI({ state, input, setInput, handleSubmit, handleCharacterAction,
                 disabled={loading}
                 className="flex-1 text-xs px-2 py-1 rounded bg-dragonred/20 text-dragonred border border-dragonred/30 hover:bg-dragonred/40 disabled:opacity-50"
               >
-                ⚔️ Angriff
+                ⚔️
               </button>
               <button
                 onClick={() => handleCharacterAction(c.name, 'verteidigen')}
                 disabled={loading}
                 className="flex-1 text-xs px-2 py-1 rounded bg-magicblue/20 text-magicblue border border-magicblue/30 hover:bg-magicblue/40 disabled:opacity-50"
               >
-                🛡️ Def
+                🛡️
               </button>
               <button
                 onClick={() => handleCharacterAction(c.name, 'warten')}
@@ -318,7 +341,6 @@ function CombatUI({ state, input, setInput, handleSubmit, handleCharacterAction,
         ))}
       </div>
 
-      {/* Combat options */}
       <div className="flex gap-2 flex-wrap">
         {['Fliehen'].map((opt) => (
           <button

@@ -114,6 +114,18 @@ def get_state(session_id: str):
         raise HTTPException(404, "Sitzung nicht gefunden")
     state = session.gm.get_state()
     nd = state.get("node_data") or {}
+    characters_info = []
+    for c in session.characters:
+        characters_info.append({
+            "id": c.id,
+            "name": c.name,
+            "char_class": getattr(c, 'char_class', ''),
+            "level": c.level,
+            "hp_current": c.hp_current,
+            "hp_max": c.hp_max,
+            "ac": c.ac,
+            "attack_bonus": c.attack_bonus,
+        })
     return {
         "session_id": session_id,
         "narrative": nd.get("narrative", ""),
@@ -123,5 +135,6 @@ def get_state(session_id: str):
         "combat_active": state.get("combat_active", False),
         "combat_state": state.get("combat_state"),
         "puzzle": nd.get("puzzle"),
-        "adventure_complete": nd.get("adventure_complete", False)
+        "adventure_complete": nd.get("adventure_complete", False),
+        "characters": characters_info
     }

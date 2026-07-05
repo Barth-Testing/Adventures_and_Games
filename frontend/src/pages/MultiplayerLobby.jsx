@@ -30,7 +30,7 @@ export default function MultiplayerLobby() {
     setStarting(true);
     try {
       const res = await adventure.startMulti(selected);
-      navigate(`/adventure/${res.session_id}`);
+      navigate(`/adventure/${res.session_id}`, { state: { initial: res } });
     } catch (e) {
       alert(e.message);
       setStarting(false);

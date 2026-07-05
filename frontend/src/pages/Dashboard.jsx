@@ -21,7 +21,7 @@ export default function Dashboard() {
   const startAdventure = async (char) => {
     try {
       const res = await adventure.start(user, char.id);
-      navigate(`/adventure/${res.session_id}`);
+      navigate(`/adventure/${res.session_id}`, { state: { initial: res } });
     } catch (e) {
       alert(e.message);
     }
