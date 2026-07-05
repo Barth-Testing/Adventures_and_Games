@@ -5,7 +5,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from .database import init_db, engine
 from .models import Base
-from .routers import auth, characters, adventure, combat
+from .routers import auth, characters, adventure, combat, tts
 
 Base.metadata.create_all(bind=engine)
 
@@ -23,6 +23,7 @@ app.include_router(auth.router)
 app.include_router(characters.router)
 app.include_router(adventure.router)
 app.include_router(combat.router)
+app.include_router(tts.router)
 
 @app.on_event("startup")
 def startup():

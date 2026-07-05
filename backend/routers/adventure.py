@@ -1,10 +1,11 @@
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks
 from pydantic import BaseModel
 from typing import List, Optional
 from sqlalchemy.orm import Session
 from ..database import get_db
 from ..models import Character
 from ..game_engine.gm_system import GMSystem
+from ..game_engine.tts import generate_audio, _text_hash
 
 router = APIRouter(prefix="/api/adventure", tags=["adventure"])
 active_sessions = {}
@@ -28,7 +29,11 @@ class AdventureSession:
         names = "_".join(c.name for c in characters)
         self.session_id = f"{names}_{id(self)}"
 
-def _build_response(session, result):
+def _build_response(session, result, background_tasks=None):
+    if background_tasks is None:
+        class _NoopBT:
+            def add_task(self, *a, **kw): pass
+        background_tasks = _NoopBT()
     state = session.gm.get_state()
     nd = state.get("node_data") or {}
     characters_info = []
@@ -43,10 +48,17 @@ def _build_response(session, result):
             "ac": c.ac,
             "attack_bonus": c.attack_bonus,
         })
+    audio_text = result.get("audio_text", nd.get("audio_text", ""))
+    audio_hash = _text_hash(audio_text.strip()[:500]) if audio_text.strip() else None
+    audio_url = f"/api/tts/{audio_hash}.mp3" if audio_hash else None
+    if audio_text.strip():
+        text = audio_text.strip()[:500]
+        background_tasks.add_task(generate_audio, text)
     return {
         "session_id": session.session_id,
         "narrative": result.get("narrative", nd.get("narrative", "")),
-        "audio_text": result.get("audio_text", nd.get("audio_text", "")),
+        "audio_text": audio_text,
+        "audio_url": audio_url,
         "options": result.get("options", nd.get("options", [])),
         "scene": nd.get("scene", ""),
         "combat_active": state.get("combat_active", False),
@@ -68,7 +80,7 @@ def _build_response(session, result):
     }
 
 @router.post("/start_multi")
-def start_multi(req: StartMultiRequest, db: Session = Depends(get_db)):
+def start_multi(req: StartMultiRequest, db: Session = Depends(get_db), background_tasks: BackgroundTasks = None):
     characters = db.query(Character).filter(Character.id.in_(req.character_ids)).all()
     if not characters:
         raise HTTPException(404, "Keine Charaktere gefunden")
@@ -79,7 +91,7 @@ def start_multi(req: StartMultiRequest, db: Session = Depends(get_db)):
     session = AdventureSession(gm, characters)
     active_sessions[session.session_id] = session
     result = gm.process_action(first, "start")
-    return _build_response(session, result)
+    return _build_response(session, result, background_tasks)
 
 @router.post("/start")
 def start_adventure(req: StartAdventureRequest, db: Session = Depends(get_db)):
@@ -89,7 +101,7 @@ def start_adventure(req: StartAdventureRequest, db: Session = Depends(get_db)):
     return start_multi(StartMultiRequest(character_ids=[req.character_id]), db)
 
 @router.post("/action")
-def process_action(req: ActionRequest):
+def process_action(req: ActionRequest, background_tasks: BackgroundTasks = None):
     session = active_sessions.get(req.session_id)
     if not session:
         raise HTTPException(404, "Sitzung nicht gefunden")
@@ -105,7 +117,7 @@ def process_action(req: ActionRequest):
     if not character:
         character = session.characters[0]
     result = session.gm.process_action(character, req.action_text)
-    return _build_response(session, result)
+    return _build_response(session, result, background_tasks)
 
 @router.get("/state/{session_id}")
 def get_state(session_id: str):

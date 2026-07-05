@@ -4,17 +4,16 @@ import { adventure } from '../api.js';
 
 const CLASS_COLORS = { krieger: 'text-dragonred', magier: 'text-magicblue', schurke: 'text-roguepurple', kleriker: 'text-naturegreen' };
 
-function speak(text) {
-  if (!window.speechSynthesis || !text) return;
-  window.speechSynthesis.cancel();
-  const utter = new SpeechSynthesisUtterance(text);
-  utter.lang = 'de-DE';
-  utter.rate = 0.9;
-  utter.pitch = 1;
-  const voices = window.speechSynthesis.getVoices();
-  const german = voices.find((v) => v.lang.startsWith('de'));
-  if (german) utter.voice = german;
-  window.speechSynthesis.speak(utter);
+function useAudio(audioUrl, ttsEnabled) {
+  const prevRef = useRef(null);
+  useEffect(() => {
+    if (prevRef.current === audioUrl) return;
+    prevRef.current = audioUrl;
+    if (!audioUrl || !ttsEnabled) return;
+    const audio = new Audio(audioUrl);
+    audio.play().catch(() => {});
+    return () => audio.pause();
+  }, [audioUrl, ttsEnabled]);
 }
 
 export default function Adventure() {
@@ -28,19 +27,17 @@ export default function Adventure() {
   const [ttsEnabled, setTtsEnabled] = useState(true);
   const logRef = useRef(null);
 
+  useAudio(state?.audio_url, ttsEnabled);
+
   useEffect(() => {
     if (location.state?.initial) {
       const initial = location.state.initial;
       setState(initial);
-      if (ttsEnabled) speak(initial.audio_text || initial.narrative);
       window.history.replaceState({}, document.title);
     } else {
       setLoading(true);
       adventure.state(sessionId)
-        .then((res) => {
-          setState(res);
-          if (ttsEnabled) speak(res.audio_text || res.narrative);
-        })
+        .then((res) => setState(res))
         .catch((e) => setError(e.message))
         .finally(() => setLoading(false));
     }
@@ -61,13 +58,12 @@ export default function Adventure() {
         ...res,
         narrative_history: [...(prev?.narrative_history || []), prev?.narrative],
       }));
-      if (ttsEnabled) speak(res.audio_text || res.narrative);
     } catch (err) {
       setError(err.message);
     } finally {
       setLoading(false);
     }
-  }, [sessionId, ttsEnabled]);
+  }, [sessionId]);
 
   const detectCharacter = useCallback((text) => {
     const lower = text.toLowerCase();
@@ -131,13 +127,15 @@ export default function Adventure() {
           >
             {ttsEnabled ? '🔊' : '🔇'}
           </button>
-          <button
-            onClick={() => { window.speechSynthesis?.cancel(); }}
-            className="text-xs px-2 py-1 rounded border border-slate-600 text-slate-400 hover:text-white transition"
-            title="Sprachausgabe stoppen"
-          >
-            ⏹
-          </button>
+          {state?.audio_url && (
+            <button
+              onClick={() => { const a = new Audio(state.audio_url); a.play().catch(() => {}); }}
+              className="text-xs px-2 py-1 rounded border border-slate-600 text-slate-400 hover:text-white transition"
+              title="Erzählung wiederholen"
+            >
+              🔄
+            </button>
+          )}
           <button
             onClick={() => navigate('/')}
             className="text-xs px-3 py-1 rounded border border-slate-600 text-slate-400 hover:text-white transition"
