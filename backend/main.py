@@ -2,6 +2,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from .database import init_db, engine
 from .models import Base
 from .routers import auth, characters, adventure, combat
@@ -18,9 +19,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-static_dir = Path(__file__).parent.parent / "static"
-if static_dir.exists():
-    app.mount("/", StaticFiles(directory=str(static_dir), html=True), name="static")
+app.include_router(auth.router)
+app.include_router(characters.router)
+app.include_router(adventure.router)
+app.include_router(combat.router)
 
 @app.on_event("startup")
 def startup():
@@ -30,7 +32,6 @@ def startup():
 def health():
     return {"status": "ok"}
 
-app.include_router(auth.router)
-app.include_router(characters.router)
-app.include_router(adventure.router)
-app.include_router(combat.router)
+static_dir = Path(__file__).parent.parent / "static"
+if static_dir.exists():
+    app.mount("/", StaticFiles(directory=str(static_dir), html=True), name="static")
