@@ -1,0 +1,14 @@
+services:
+  game:
+    build: .
+    container_name: abenteuer-games
+    ports:
+      - "5555:8000"
+    volumes:
+      - game_data:/app/data
+    environment:
+      - JWT_SECRET=${JWT_SECRET:-change-me-in-production}
+    restart: unless-stopped
+
+volumes:
+  game_data:
